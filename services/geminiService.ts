@@ -1,12 +1,24 @@
 import { GoogleGenAI, Type } from "@google/genai";
 import { RemedialPlan, SmartGoal, TeacherProfile } from '../types';
 
-// NOTE: In a real app, API key should not be exposed on client side directly if public.
-// Assuming process.env.API_KEY is available as per instructions.
+// Access the injected API key
+// The build process (vite.config.ts) replaces process.env.API_KEY with the actual string
 const apiKey = process.env.API_KEY || ''; 
+
+// Initialize AI Client
 const ai = new GoogleGenAI({ apiKey });
 
 const modelName = 'gemini-2.5-flash';
+
+// Helper to validate key before calls
+const checkApiKey = () => {
+  if (!apiKey || apiKey.trim() === '') {
+    console.error("RemedialAI: API Key is missing or empty.");
+    throw new Error("API Key is missing. Please check your Vercel Environment Variables (Settings > Environment Variables > API_KEY).");
+  }
+  // Debug log (masked) to verify key presence in browser console
+  console.log("RemedialAI: API Key loaded (" + apiKey.substring(0, 4) + "...)");
+};
 
 // Helper to determine standard type based on subject
 const getStandardContext = (subject: string) => {
@@ -22,6 +34,7 @@ export const generateRemedialPlan = async (
   duration: string,
   profile: TeacherProfile
 ): Promise<RemedialPlan> => {
+  checkApiKey();
   const standardType = getStandardContext(profile.subject);
   
   const prompt = `
@@ -71,13 +84,14 @@ export const generateRemedialPlan = async (
         exitTicket: json.exitTicket
       }
     };
-  } catch (error) {
+  } catch (error: any) {
     console.error("AI Plan Gen Error", error);
-    throw error;
+    throw new Error(error.message || "Failed to generate remedial plan");
   }
 };
 
 export const generateSmartGoal = async (skill: string, currentAccuracy: number, profile: TeacherProfile): Promise<SmartGoal> => {
+  checkApiKey();
   const prompt = `
     Create a SMART goal for a Grade ${profile.gradeLevel} student who scored ${currentAccuracy.toFixed(0)}% in "${skill}". 
     Subject: ${profile.subject}.
@@ -106,6 +120,7 @@ export const generateSmartGoal = async (skill: string, currentAccuracy: number, 
     return JSON.parse(response.text || '{}');
   } catch (e) {
     console.error(e);
+    // Fallback if AI fails (e.g. quota)
     return {
         specific: "Improve " + skill,
         measurable: "80% accuracy",
@@ -118,6 +133,7 @@ export const generateSmartGoal = async (skill: string, currentAccuracy: number, 
 };
 
 export const generateWorksheet = async (skill: string, description: string, profile: TeacherProfile): Promise<string> => {
+  checkApiKey();
   const standardType = getStandardContext(profile.subject);
 
   const prompt = `
@@ -141,12 +157,17 @@ export const generateWorksheet = async (skill: string, description: string, prof
     Use bullet points or numbered lists for questions.
   `;
   
-  const response = await ai.models.generateContent({
-    model: modelName,
-    contents: prompt
-  });
+  try {
+    const response = await ai.models.generateContent({
+      model: modelName,
+      contents: prompt
+    });
 
-  return response.text || "Failed to generate worksheet.";
+    return response.text || "Failed to generate worksheet.";
+  } catch (error: any) {
+    console.error("AI Worksheet Gen Error", error);
+    throw new Error(error.message || "Failed to generate worksheet");
+  }
 };
 
 export const generateParentReport = async (
@@ -154,6 +175,7 @@ export const generateParentReport = async (
     weakSkills: {code: string, desc: string}[],
     profile: TeacherProfile
 ): Promise<string> => {
+    checkApiKey();
     const skillsList = weakSkills.map(s => `${s.desc} (${s.code})`).join(", ");
     const prompt = `
       Write a supportive, parent-friendly report for student "${studentName}" in Grade ${profile.gradeLevel}.
@@ -171,10 +193,15 @@ export const generateParentReport = async (
       Format: Markdown.
     `;
     
-    const response = await ai.models.generateContent({
-        model: modelName,
-        contents: prompt
-    });
+    try {
+        const response = await ai.models.generateContent({
+            model: modelName,
+            contents: prompt
+        });
 
-    return response.text || "Failed to generate report.";
+        return response.text || "Failed to generate report.";
+    } catch (error: any) {
+        console.error("AI Report Gen Error", error);
+        throw new Error(error.message || "Failed to generate report");
+    }
 };

@@ -1,7 +1,10 @@
 import React from 'react';
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, PieChart, Pie, Cell } from 'recharts';
 import { ClassAnalysis, ProficiencyLevel, SkillStat } from '../types';
-import { TrendingUp, AlertTriangle, CheckCircle, Users, Download } from 'lucide-react';
+import { TrendingUp, AlertTriangle, CheckCircle, Users, Download, FileText, Printer } from 'lucide-react';
+import FileSaver from 'file-saver';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
 
 interface DashboardProps {
   data: ClassAnalysis;
@@ -43,10 +46,197 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
   };
 
   // Dynamic width for bar chart
-  // Reduced multiplier to 5 to make it less wide/aggressive
   const minChartWidth = Math.max(100, skillChartData.length * 5);
 
   const totalStudents = data.students.length;
+  const classAvg = Math.round(data.students.reduce((a,b) => a + b.overallScore, 0) / totalStudents);
+
+  // --- PDF GENERATION LOGIC ---
+  const handleDownloadPDF = () => {
+    const doc = new jsPDF();
+    const dateStr = new Date().toLocaleDateString();
+
+    // Title
+    doc.setFontSize(22);
+    doc.setTextColor(79, 70, 229); // Indigo
+    doc.text("Class Performance Dashboard", 14, 20);
+    
+    // Subheader
+    doc.setFontSize(10);
+    doc.setTextColor(100);
+    doc.text(`Generated on: ${dateStr} | Total Students: ${totalStudents}`, 14, 28);
+
+    // Executive Summary Box
+    doc.setFillColor(243, 244, 246);
+    doc.rect(14, 35, 182, 30, 'F');
+    
+    doc.setFontSize(12);
+    doc.setTextColor(0);
+    doc.text("Executive Summary", 20, 45);
+    
+    doc.setFontSize(10);
+    doc.text(`Class Average: ${classAvg}%`, 20, 55);
+    doc.text(`Weakest Skill: ${data.weakestSkillsClasswide[0] || 'N/A'}`, 80, 55);
+    doc.text(`Mastered Skills: ${Object.values(data.skillStats).filter((s: any) => s.avgAccuracy > 80).length}`, 140, 55);
+
+    // Section 1: Proficiency Distribution
+    doc.setFontSize(14);
+    doc.setTextColor(79, 70, 229);
+    doc.text("Proficiency Distribution", 14, 80);
+
+    const distBody = [ProficiencyLevel.Strong, ProficiencyLevel.Moderate, ProficiencyLevel.Weak, ProficiencyLevel.Critical].map(level => {
+        const count = proficiencyCounts[level];
+        const pct = totalStudents > 0 ? Math.round((count / totalStudents) * 100) : 0;
+        return [level, count, `${pct}%`];
+    });
+
+    autoTable(doc, {
+        startY: 85,
+        head: [['Level', 'Count', 'Percentage']],
+        body: distBody,
+        theme: 'striped',
+        headStyles: { fillColor: [100, 100, 100] }
+    });
+
+    // Section 2: Comprehensive Skills Matrix
+    const finalY = (doc as any).lastAutoTable.finalY + 15;
+    doc.setFontSize(14);
+    doc.setTextColor(79, 70, 229);
+    doc.text("Comprehensive Skills Matrix", 14, finalY);
+
+    const skillsBody = (Object.values(data.skillStats) as SkillStat[])
+        .sort((a,b) => a.avgAccuracy - b.avgAccuracy)
+        .map(stat => [
+            stat.skillCode,
+            stat.description,
+            `${stat.avgAccuracy.toFixed(1)}%`,
+            stat.strongCount,
+            stat.moderateCount,
+            stat.weakCount,
+            stat.criticalCount
+        ]);
+
+    autoTable(doc, {
+        startY: finalY + 5,
+        head: [['Code', 'Description', 'Avg Acc', 'Strong', 'Mod', 'Weak', 'Crit']],
+        body: skillsBody,
+        theme: 'grid',
+        headStyles: { fillColor: [79, 70, 229] },
+        columnStyles: {
+            0: { fontStyle: 'bold' },
+            6: { textColor: [239, 68, 68], fontStyle: 'bold' } // Critical column red
+        }
+    });
+
+    doc.save(`Dashboard_Report_${dateStr.replace(/\//g, '-')}.pdf`);
+  };
+
+  const handleDownloadWord = () => {
+    // 1. Construct HTML content
+    const dateStr = new Date().toLocaleDateString();
+    
+    // Sort skills for table
+    const sortedSkills = (Object.values(data.skillStats) as SkillStat[]).sort((a,b) => a.avgAccuracy - b.avgAccuracy);
+
+    const htmlContent = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset='utf-8'>
+            <title>Dashboard Report</title>
+            <style>
+                body { font-family: 'Calibri', sans-serif; font-size: 11pt; }
+                h1 { font-size: 18pt; color: #2E74B5; margin-bottom: 5pt; }
+                h2 { font-size: 14pt; color: #1F4D78; margin-top: 15pt; margin-bottom: 5pt; border-bottom: 1px solid #ddd; }
+                .stat-box { border: 1px solid #ccc; padding: 10px; margin-bottom: 10px; background: #f9f9f9; }
+                table { border-collapse: collapse; width: 100%; margin-bottom: 15px; }
+                th { background-color: #f0f0f0; border: 1px solid #999; padding: 5px; text-align: left; font-weight: bold; }
+                td { border: 1px solid #999; padding: 5px; }
+                .critical { color: #ef4444; font-weight: bold; }
+                .strong { color: #22c55e; }
+            </style>
+        </head>
+        <body>
+            <h1>Class Performance Dashboard</h1>
+            <p><strong>Date:</strong> ${dateStr} | <strong>Total Students:</strong> ${totalStudents}</p>
+
+            <h2>Executive Summary</h2>
+            <table style="border: none;">
+                <tr style="border: none;">
+                    <td style="border: none; width: 25%; background: #eef2ff; padding: 15px;">
+                        <strong>Class Average</strong><br/>
+                        <span style="font-size: 16pt;">${classAvg}%</span>
+                    </td>
+                    <td style="border: none; width: 25%; background: #fff7ed; padding: 15px;">
+                        <strong>Weakest Skill</strong><br/>
+                        <span style="font-size: 14pt;">${data.weakestSkillsClasswide[0] || 'N/A'}</span>
+                    </td>
+                     <td style="border: none; width: 25%; background: #f0fdf4; padding: 15px;">
+                        <strong>Mastered Skills</strong><br/>
+                        <span style="font-size: 16pt;">${(Object.values(data.skillStats) as SkillStat[]).filter(s => s.avgAccuracy > 80).length}</span>
+                    </td>
+                </tr>
+            </table>
+
+            <h2>Proficiency Distribution</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Proficiency Level</th>
+                        <th>Student Count</th>
+                        <th>Percentage</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${Object.keys(proficiencyCounts).map(level => {
+                        const count = proficiencyCounts[level as ProficiencyLevel];
+                        const pct = totalStudents > 0 ? Math.round((count / totalStudents) * 100) : 0;
+                        return `
+                            <tr>
+                                <td>${level}</td>
+                                <td>${count}</td>
+                                <td>${pct}%</td>
+                            </tr>
+                        `;
+                    }).join('')}
+                </tbody>
+            </table>
+
+            <h2>Comprehensive Skills Matrix</h2>
+            <table>
+                <thead>
+                    <tr>
+                        <th>Skill Code</th>
+                        <th>Description</th>
+                        <th>Accuracy</th>
+                        <th>Strong</th>
+                        <th>Moderate</th>
+                        <th>Weak</th>
+                        <th>Critical</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    ${sortedSkills.map(stat => `
+                        <tr>
+                            <td>${stat.skillCode}</td>
+                            <td>${stat.description}</td>
+                            <td>${stat.avgAccuracy.toFixed(1)}%</td>
+                            <td>${stat.strongCount}</td>
+                            <td>${stat.moderateCount}</td>
+                            <td>${stat.weakCount}</td>
+                            <td class="${stat.criticalCount > 0 ? 'critical' : ''}">${stat.criticalCount}</td>
+                        </tr>
+                    `).join('')}
+                </tbody>
+            </table>
+            
+            <p style="font-size: 9pt; color: #666; margin-top: 20px;">Generated by RemedialAI Planner</p>
+        </body>
+        </html>
+    `;
+
+    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
+    FileSaver.saveAs(blob, `Class_Dashboard_Report_${new Date().toISOString().split('T')[0]}.doc`);
+  };
 
   const downloadSkillsReport = () => {
     const headers = ['Skill Code', 'Description', 'Avg Accuracy', 'Strong', 'Moderate', 'Weak', 'Critical'];
@@ -75,6 +265,28 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
 
   return (
     <div className="space-y-6">
+      {/* Action Toolbar */}
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4 bg-white p-4 rounded-xl shadow-sm border border-gray-100 no-print">
+         <div>
+             <h2 className="text-xl font-bold text-gray-800">Class Dashboard</h2>
+             <p className="text-sm text-gray-500">Overview of student performance and skill gaps</p>
+         </div>
+         <div className="flex gap-3">
+             <button 
+                onClick={handleDownloadWord}
+                className="flex items-center gap-2 px-4 py-2 bg-blue-50 text-blue-700 rounded-lg font-medium hover:bg-blue-100 transition-colors border border-blue-200"
+             >
+                 <FileText size={18} /> Export Word
+             </button>
+             <button 
+                onClick={handleDownloadPDF}
+                className="flex items-center gap-2 px-4 py-2 bg-gray-900 text-white rounded-lg font-medium hover:bg-gray-800 transition-colors shadow-sm"
+             >
+                 <Printer size={18} /> Download PDF Report
+             </button>
+         </div>
+      </div>
+
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard 
           title="Total Students" 
@@ -84,7 +296,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
         />
         <StatCard 
           title="Class Average" 
-          value={`${Math.round(data.students.reduce((a,b) => a + b.overallScore, 0) / data.students.length)}%`} 
+          value={`${classAvg}%`} 
           icon={TrendingUp} 
           color="bg-indigo-500" 
         />
@@ -104,7 +316,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
 
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Skill Performance Chart */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col print-break-avoid">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Skill Performance Overview</h3>
           <div className="flex-1 overflow-x-auto custom-scrollbar">
              <div style={{ width: `${minChartWidth}%`, minWidth: '100%', height: 320 }}>
@@ -124,7 +336,7 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
         </div>
 
         {/* Student Distribution Pie & Table */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
+        <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col print-break-avoid">
           <h3 className="text-lg font-semibold text-gray-800 mb-4">Class Proficiency Distribution</h3>
           <div className="flex flex-col md:flex-row items-center gap-6 h-full">
             <div className="h-64 w-full md:w-1/2">
@@ -181,21 +393,21 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
         </div>
       </div>
 
-      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col">
+      <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex flex-col print-break-avoid">
         <div className="flex justify-between items-center mb-4">
             <h3 className="text-lg font-semibold text-gray-800">All Skills Performance</h3>
             <button 
                 onClick={downloadSkillsReport}
-                className="flex items-center gap-2 text-sm text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors"
+                className="flex items-center gap-2 text-sm text-indigo-600 bg-indigo-50 px-3 py-1.5 rounded-lg hover:bg-indigo-100 transition-colors no-print"
             >
                 <Download size={16} /> Export CSV
             </button>
         </div>
         
         {/* Added scrollable container with sticky header for robustness with many skills */}
-        <div className="overflow-x-auto border border-gray-100 rounded-lg max-h-[600px] overflow-y-auto custom-scrollbar">
+        <div className="overflow-x-auto border border-gray-100 rounded-lg max-h-[600px] overflow-y-auto custom-scrollbar print-no-scroll">
             <table className="min-w-full divide-y divide-gray-200">
-                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm">
+                <thead className="bg-gray-50 sticky top-0 z-10 shadow-sm print-no-sticky">
                     <tr>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Skill Code</th>
                         <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider bg-gray-50">Description</th>
@@ -233,9 +445,9 @@ const Dashboard: React.FC<DashboardProps> = ({ data }) => {
 };
 
 const StatCard = ({ title, value, icon: Icon, color }: any) => (
-  <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center">
-    <div className={`${color} p-4 rounded-lg text-white mr-4`}>
-      <Icon size={24} />
+  <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-100 flex items-center print-border">
+    <div className={`${color} p-4 rounded-lg text-white mr-4 print-no-bg`}>
+      <Icon size={24} className="print-dark-icon" />
     </div>
     <div>
       <p className="text-sm text-gray-500 font-medium">{title}</p>

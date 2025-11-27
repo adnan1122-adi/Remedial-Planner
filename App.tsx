@@ -6,7 +6,10 @@ import RemedialPlanner from './components/RemedialPlanner';
 import Reports from './components/Reports';
 import OnboardingView from './components/OnboardingView';
 import { ClassAnalysis, SkillStat, TeacherProfile } from './types';
-import { Users, BarChart2 } from 'lucide-react';
+import { Users, BarChart2, FileText, Printer } from 'lucide-react';
+import jsPDF from 'jspdf';
+import autoTable from 'jspdf-autotable';
+import FileSaver from 'file-saver';
 
 const App: React.FC = () => {
   const [profile, setProfile] = useState<TeacherProfile | null>(null);
@@ -29,7 +32,7 @@ const App: React.FC = () => {
       case 'dashboard':
         return analysisData ? <Dashboard data={analysisData} /> : <RedirectToUpload />;
       case 'class-summary':
-        return analysisData ? <ClassSummaryView data={analysisData} /> : <RedirectToUpload />;
+        return analysisData ? <ClassSummaryView data={analysisData} teacherProfile={profile} /> : <RedirectToUpload />;
       case 'planner':
         return analysisData ? <RemedialPlanner data={analysisData} teacherProfile={profile} /> : <RedirectToUpload />;
       case 'reports':
@@ -58,34 +61,167 @@ const RedirectToUpload = () => (
   </div>
 );
 
-const ClassSummaryView = ({ data }: { data: ClassAnalysis }) => {
+const ClassSummaryView = ({ data, teacherProfile }: { data: ClassAnalysis, teacherProfile: TeacherProfile }) => {
   const [activeTab, setActiveTab] = useState<'students' | 'skills'>('students');
+
+  const handleDownloadPDF = () => {
+    const doc = new jsPDF();
+    doc.setFontSize(18);
+    doc.text(`Class Analysis Report`, 14, 20);
+    doc.setFontSize(12);
+    doc.text(`Teacher: ${teacherProfile.name} | Grade: ${teacherProfile.gradeLevel}`, 14, 30);
+    
+    // Summary Stats
+    const totalStudents = data.students.length;
+    const avgScore = Math.round(data.students.reduce((a, b) => a + b.overallScore, 0) / totalStudents);
+    doc.text(`Total Students: ${totalStudents} | Class Average: ${avgScore}%`, 14, 40);
+
+    // Section 1: Student Roster
+    doc.text("Student Performance Roster", 14, 55);
+    
+    const studentBody = data.students.map(s => [
+        s.studentName,
+        s.studentId,
+        Math.round(s.overallScore) + '%',
+        s.weakestSkills[0]?.skillCode || 'None',
+        s.overallScore < 70 ? 'Remedial' : 'On Track'
+    ]);
+
+    autoTable(doc, {
+        startY: 60,
+        head: [['Name', 'ID', 'Score', 'Weakest Skill', 'Status']],
+        body: studentBody,
+        theme: 'grid',
+        headStyles: { fillColor: [79, 70, 229] }
+    });
+
+    // Section 2: Skills Matrix
+    const finalY = (doc as any).lastAutoTable.finalY + 20;
+    doc.text("Skills Performance Matrix", 14, finalY);
+
+    const skillsBody = Object.values(data.skillStats).map((s: SkillStat) => [
+        s.skillCode,
+        s.description,
+        s.avgAccuracy.toFixed(1) + '%',
+        s.weakCount,
+        s.criticalCount
+    ]);
+
+    autoTable(doc, {
+        startY: finalY + 5,
+        head: [['Code', 'Description', 'Avg Acc', 'Weak', 'Critical']],
+        body: skillsBody,
+        theme: 'grid',
+        headStyles: { fillColor: [220, 38, 38] } // Red header for skills
+    });
+
+    doc.save('Class_Analysis_Report.pdf');
+  };
+
+  const handleDownloadWord = () => {
+    const dateStr = new Date().toLocaleDateString();
+    
+    // Build tables HTML
+    const studentRows = data.students.map(s => `
+        <tr>
+            <td>${s.studentName}</td>
+            <td>${Math.round(s.overallScore)}%</td>
+            <td>${s.weakestSkills[0]?.skillCode || 'N/A'}</td>
+            <td style="color:${s.overallScore < 70 ? 'red' : 'green'}">${s.overallScore < 70 ? 'Remedial' : 'On Track'}</td>
+        </tr>
+    `).join('');
+
+    const skillRows = Object.values(data.skillStats).map((s: SkillStat) => `
+        <tr>
+            <td>${s.skillCode}</td>
+            <td>${s.description}</td>
+            <td>${s.avgAccuracy.toFixed(1)}%</td>
+            <td>${s.weakCount}</td>
+            <td style="font-weight:bold; color: red;">${s.criticalCount}</td>
+        </tr>
+    `).join('');
+
+    const htmlContent = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset='utf-8'>
+            <title>Class Analysis</title>
+            <style>
+                body { font-family: 'Calibri', sans-serif; font-size: 11pt; }
+                h1 { font-size: 18pt; color: #4F46E5; }
+                h2 { font-size: 14pt; color: #333; margin-top: 20px; border-bottom: 1px solid #ccc; }
+                table { border-collapse: collapse; width: 100%; margin-bottom: 20px; }
+                th { background-color: #f3f4f6; border: 1px solid #999; padding: 5px; text-align: left; }
+                td { border: 1px solid #999; padding: 5px; }
+            </style>
+        </head>
+        <body>
+            <h1>Class Analysis Report</h1>
+            <p><strong>Teacher:</strong> ${teacherProfile.name} | <strong>Date:</strong> ${dateStr}</p>
+            
+            <h2>Student Roster</h2>
+            <table>
+                <thead>
+                    <tr><th>Name</th><th>Score</th><th>Weakest Skill</th><th>Status</th></tr>
+                </thead>
+                <tbody>${studentRows}</tbody>
+            </table>
+
+            <h2>Skills Matrix</h2>
+            <table>
+                <thead>
+                    <tr><th>Skill Code</th><th>Description</th><th>Accuracy</th><th>Weak Count</th><th>Critical Count</th></tr>
+                </thead>
+                <tbody>${skillRows}</tbody>
+            </table>
+        </body>
+        </html>
+    `;
+    
+    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
+    FileSaver.saveAs(blob, `Class_Analysis_${dateStr}.doc`);
+  };
 
   return (
     <div className="space-y-6">
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 overflow-hidden">
-        <div className="p-6 border-b border-gray-100 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div className="p-6 border-b border-gray-100 flex flex-col md:flex-row md:items-center justify-between gap-4">
             <div>
               <h2 className="text-xl font-bold text-gray-800">Class Analysis</h2>
               <p className="text-sm text-gray-500">Comprehensive breakdown by student and skill.</p>
             </div>
             
-            <div className="flex bg-gray-100 p-1 rounded-lg">
+            <div className="flex flex-wrap items-center gap-3">
+                <div className="flex bg-gray-100 p-1 rounded-lg">
+                    <button 
+                      onClick={() => setActiveTab('students')}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                        activeTab === 'students' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <Users size={16} /> Students
+                    </button>
+                    <button 
+                      onClick={() => setActiveTab('skills')}
+                      className={`flex items-center gap-2 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
+                        activeTab === 'skills' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
+                      }`}
+                    >
+                      <BarChart2 size={16} /> Skills
+                    </button>
+                </div>
+                <div className="h-6 w-px bg-gray-300 mx-1 hidden md:block"></div>
                 <button 
-                  onClick={() => setActiveTab('students')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                    activeTab === 'students' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
+                   onClick={handleDownloadWord}
+                   className="flex items-center gap-2 px-3 py-1.5 bg-blue-50 text-blue-700 rounded-lg text-sm font-medium hover:bg-blue-100 transition-colors border border-blue-200"
                 >
-                  <Users size={16} /> Students
+                   <FileText size={16} /> Word
                 </button>
                 <button 
-                  onClick={() => setActiveTab('skills')}
-                  className={`flex items-center gap-2 px-4 py-2 rounded-md text-sm font-medium transition-all ${
-                    activeTab === 'skills' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'
-                  }`}
+                   onClick={handleDownloadPDF}
+                   className="flex items-center gap-2 px-3 py-1.5 bg-red-50 text-red-700 rounded-lg text-sm font-medium hover:bg-red-100 transition-colors border border-red-200"
                 >
-                  <BarChart2 size={16} /> Skills Matrix
+                   <Printer size={16} /> PDF
                 </button>
             </div>
         </div>

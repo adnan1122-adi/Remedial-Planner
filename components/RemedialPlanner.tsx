@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { ClassAnalysis, RemedialGroup, RemedialPlan, GeneratedContent, ProficiencyLevel, TeacherProfile } from '../types';
 import { generateRemedialPlan, generateWorksheet, generateSmartGoal } from '../services/geminiService';
-import { Users, Clock, Target, FileText, Download, Loader2, Sparkles, ChevronDown, ChevronUp, FileType, Printer } from 'lucide-react';
+import { Users, Clock, Target, FileText, Download, Loader2, Sparkles, ChevronDown, ChevronUp, FileType, Printer, FolderDown } from 'lucide-react';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
 import ReactMarkdown from 'react-markdown';
@@ -15,12 +15,23 @@ interface PlannerProps {
 }
 
 const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
-  const [selectedGroup, setSelectedGroup] = useState<RemedialGroup | null>(null);
+  const [selectedGroup, setSelectedGroupState] = useState<RemedialGroup | null>(null);
   const [loading, setLoading] = useState(false);
   const [generatedContent, setGeneratedContent] = useState<Record<string, GeneratedContent>>({}); // key is group ID
 
   // Sort groups by number of students (prioritize larger groups)
   const sortedGroups = [...data.groups].sort((a, b) => b.students.length - a.students.length);
+
+  const setSelectedGroup = (group: RemedialGroup) => {
+    setSelectedGroupState(group);
+    // Scroll to details on mobile/tablet
+    setTimeout(() => {
+        const detailsEl = document.getElementById('group-details-panel');
+        if (detailsEl) {
+            detailsEl.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }, 100);
+  };
 
   const handleGenerate = async (group: RemedialGroup) => {
     setLoading(true);
@@ -40,8 +51,9 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
           smartGoal: goal
         }
       }));
-    } catch (e) {
-      alert("Error generating content. Please check your API Key.");
+    } catch (e: any) {
+      console.error(e);
+      alert(`Error: ${e.message || "Failed to generate content. Please check your API Key and quota."}`);
     } finally {
       setLoading(false);
     }
@@ -52,24 +64,19 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
     if (!content) return;
 
     // We use the browser's native print-to-pdf capability for the highest fidelity
-    // especially for Math/KaTeX which is very hard to render purely with jsPDF text.
-    
     const printWindow = window.open('', '', 'height=600,width=800');
     if (!printWindow) return;
 
     let htmlBody = '';
 
     if (type === 'worksheet') {
-       // Grab the rendered HTML directly from the DOM to preserve KaTeX
        const previewElement = document.getElementById(`worksheet-preview-content-${group.id}`);
        if (previewElement) {
            htmlBody = previewElement.innerHTML;
        } else {
-           // Fallback if DOM not found (shouldn't happen if view is active)
            htmlBody = `<p>Error: Could not find worksheet content. Please generate it first.</p>`;
        }
     } else {
-        // Build Plan HTML manually
         htmlBody = `
             <h1>Remedial Lesson Plan</h1>
             <h2>${group.skillCode}: ${group.skillDescription}</h2>
@@ -106,12 +113,10 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
                     ul, ol { margin-bottom: 15px; padding-left: 25px; }
                     li { margin-bottom: 8px; }
                     .katex { font-size: 1.1em; } 
-                    /* Print specific optimizations */
                     @media print {
                         body { padding: 0; }
                         @page { margin: 2cm; size: auto; }
                         .no-print { display: none; }
-                        /* Avoid breaking inside questions or headers */
                         h1, h2, h3, li { page-break-inside: avoid; }
                         p { page-break-inside: auto; }
                     }
@@ -131,108 +136,47 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
   // Helper to convert LaTeX string to Word-friendly HTML
   const formatLatexForWord = (latex: string) => {
       let html = latex;
-      
-      // Symbol Mapping
       const symbols: Record<string, string> = {
-          '\\\\times': '×',
-          '\\\\div': '÷',
-          '\\\\cdot': '⋅',
-          '\\\\pm': '±',
-          '\\\\leq': '≤',
-          '\\\\geq': '≥',
-          '\\\\neq': '≠',
-          '\\\\approx': '≈',
-          '\\\\pi': 'π',
-          '\\\\alpha': 'α',
-          '\\\\beta': 'β',
-          '\\\\theta': 'θ',
-          '\\\\sqrt': '√',
-          '\\\\infty': '∞',
-          '\\\\degree': '°',
-          '\\\\angle': '∠'
+          '\\\\times': '×', '\\\\div': '÷', '\\\\cdot': '⋅', '\\\\pm': '±', '\\\\leq': '≤', '\\\\geq': '≥', '\\\\neq': '≠', '\\\\approx': '≈',
+          '\\\\pi': 'π', '\\\\alpha': 'α', '\\\\beta': 'β', '\\\\theta': 'θ', '\\\\sqrt': '√', '\\\\infty': '∞', '\\\\degree': '°', '\\\\angle': '∠'
       };
-
-      Object.keys(symbols).forEach(key => {
-          html = html.replace(new RegExp(key, 'g'), symbols[key]);
-      });
-
-      // Fractions: \frac{a}{b} -> (a/b)
-      // This handles standard single-level fractions well.
+      Object.keys(symbols).forEach(key => { html = html.replace(new RegExp(key, 'g'), symbols[key]); });
       html = html.replace(/\\frac\{([^{}]+)\}\{([^{}]+)\}/g, '($1/$2)');
-
-      // Superscripts: ^{...} or ^x -> <sup>...</sup>
       html = html.replace(/\^\{([^{}]+)\}/g, '<sup>$1</sup>');
       html = html.replace(/\^([0-9a-zA-Z]+)/g, '<sup>$1</sup>');
-
-      // Subscripts: _{...} or _x -> <sub>...</sub>
       html = html.replace(/_\{([^{}]+)\}/g, '<sub>$1</sub>');
       html = html.replace(/_([0-9a-zA-Z]+)/g, '<sub>$1</sub>');
-
-      // Remove \text{...} wrapper
       html = html.replace(/\\text\{([^{}]+)\}/g, '$1');
-
-      // Clean up other backslashes for unsupported commands
       html = html.replace(/\\([a-zA-Z]+)/g, ' $1 ');
-
-      // Cleanup stray braces
       html = html.replace(/[{}]/g, '');
-
       return html;
+  };
+
+  const convertMarkdownToWordHtml = (md: string) => {
+    md = md.replace(/\$([^\$]+)\$/gim, (match, p1) => `<span style="font-family: 'Cambria Math', serif; background-color: #f9f9f9;">${formatLatexForWord(p1)}</span>`);
+    md = md.replace(/\$\$([^\$]+)\$\$/gim, (match, p1) => `<div style="font-family: 'Cambria Math', serif; background-color: #f9f9f9; padding: 5px; margin: 5px 0; text-align: center;">${formatLatexForWord(p1)}</div>`);
+    md = md.replace(/^### (.*$)/gm, '<h3>$1</h3>');
+    md = md.replace(/^## (.*$)/gm, '<h2>$1</h2>');
+    md = md.replace(/^# (.*$)/gm, '<h1>$1</h1>');
+    md = md.replace(/^---$/gm, '<hr/>');
+    md = md.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
+    md = md.replace(/\*(.*?)\*/g, '<i>$1</i>');
+    md = md.replace(/__(.*?)__/g, '<b>$1</b>');
+    md = md.replace(/_(.*?)_/g, '<i>$1</i>');
+    md = md.replace(/^\s*(\d+)\.\s+(.*)$/gm, '<p style="margin-left: 20px; text-indent: -20px; margin-bottom: 5pt;"><b>$1.</b> $2</p>');
+    md = md.replace(/^\s*[\-\*]\s+(.*)$/gm, '<p style="margin-left: 20px; text-indent: -10px; margin-bottom: 5pt;">• $1</p>');
+    md = md.replace(/(<h[23]>\s*Answer Key\s*<\/h[23]>)/i, '<br clear=all style="mso-special-character:line-break;page-break-before:always" />$1');
+    md = md.replace(/(<\/?(h\d|p|div|hr)>)\n/g, '$1'); 
+    md = md.replace(/\n\n/g, '<br/><br/>');
+    md = md.replace(/\n/g, '<br/>');
+    return md;
   };
 
   const exportWord = (group: RemedialGroup) => {
     const content = generatedContent[group.id];
     if (!content || !content.worksheetContent) return;
 
-    // Robust Markdown to HTML converter for Word
-    let md = content.worksheetContent;
-
-    // 1. Handle Math First (Convert LaTeX to HTML-friendly text)
-    // Replace $...$ blocks with formatted HTML span
-    md = md.replace(/\$([^\$]+)\$/gim, (match, p1) => {
-        return `<span style="font-family: 'Cambria Math', serif; background-color: #f9f9f9;">${formatLatexForWord(p1)}</span>`;
-    });
-    // Handle block math $$...$$
-    md = md.replace(/\$\$([^\$]+)\$\$/gim, (match, p1) => {
-        return `<div style="font-family: 'Cambria Math', serif; background-color: #f9f9f9; padding: 5px; margin: 5px 0; text-align: center;">${formatLatexForWord(p1)}</div>`;
-    });
-
-    // 2. Convert Headers
-    md = md.replace(/^### (.*$)/gm, '<h3>$1</h3>');
-    md = md.replace(/^## (.*$)/gm, '<h2>$1</h2>');
-    md = md.replace(/^# (.*$)/gm, '<h1>$1</h1>');
-    
-    // 3. Horizontal Rules
-    md = md.replace(/^---$/gm, '<hr/>');
-
-    // 4. Convert Bold/Italic
-    md = md.replace(/\*\*(.*?)\*\*/g, '<b>$1</b>');
-    md = md.replace(/\*(.*?)\*/g, '<i>$1</i>');
-    md = md.replace(/__(.*?)__/g, '<b>$1</b>');
-    md = md.replace(/_(.*?)_/g, '<i>$1</i>');
-
-    // 5. Handle Lists (Improved for Word)
-    // Use styled <p> instead of <li>. This is much more reliable in Word HTML import.
-    
-    // Numbered Lists (e.g. 1. Answer)
-    md = md.replace(/^\s*(\d+)\.\s+(.*)$/gm, '<p style="margin-left: 20px; text-indent: -20px; margin-bottom: 5pt;"><b>$1.</b> $2</p>');
-    
-    // Bullet Lists (e.g. - Answer or * Answer)
-    md = md.replace(/^\s*[\-\*]\s+(.*)$/gm, '<p style="margin-left: 20px; text-indent: -10px; margin-bottom: 5pt;">• $1</p>');
-
-    // 6. Page Break before Answer Key
-    // Looks for the "Answer Key" header (H2 or H3) and adds a page break before it. 
-    // Uses mso-special-character logic which Word prefers.
-    md = md.replace(/(<h[23]>\s*Answer Key\s*<\/h[23]>)/i, '<br clear=all style="mso-special-character:line-break;page-break-before:always" />$1');
-
-    // 7. Line breaks for paragraphs
-    // Clean up newlines around block elements to avoid huge gaps
-    md = md.replace(/(<\/?(h\d|p|div|hr)>)\n/g, '$1'); 
-    
-    // Replace double newlines with breaks
-    md = md.replace(/\n\n/g, '<br/><br/>');
-    // Replace single newlines with breaks
-    md = md.replace(/\n/g, '<br/>');
+    const md = convertMarkdownToWordHtml(content.worksheetContent);
 
     const htmlContent = `
         <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
@@ -247,52 +191,114 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
                 p { margin-bottom: 10pt; }
                 .header-table { width: 100%; border-bottom: 2px solid #000; margin-bottom: 20px; padding-bottom: 10px; }
                 .header-td { padding: 5px; font-weight: bold; }
-                /* Ensure questions don't break awkwardly across pages */
                 li, h3, p { page-break-inside: avoid; }
             </style>
         </head>
         <body>
-            <!-- Professional Header -->
             <table class="header-table">
-                <tr>
-                    <td class="header-td">Name: __________________________</td>
-                    <td class="header-td" style="text-align: right;">Date: ________________</td>
-                </tr>
-                 <tr>
-                    <td class="header-td">Topic: ${group.skillDescription}</td>
-                    <td class="header-td" style="text-align: right;">Score: _______ / _______</td>
-                </tr>
+                <tr><td class="header-td">Name: __________________________</td><td class="header-td" style="text-align: right;">Date: ________________</td></tr>
+                 <tr><td class="header-td">Topic: ${group.skillDescription}</td><td class="header-td" style="text-align: right;">Score: _______ / _______</td></tr>
             </table>
-            
             ${md}
-            
-            <br/><br/>
-            <p style="font-size: 9pt; color: #666; text-align: center;">Generated by RemedialAI Planner</p>
+            <br/><br/><p style="font-size: 9pt; color: #666; text-align: center;">Generated by RemedialAI Planner</p>
         </body>
         </html>
     `;
 
-    const blob = new Blob(['\ufeff', htmlContent], {
-        type: 'application/msword'
-    });
-    
+    const blob = new Blob(['\ufeff', htmlContent], { type: 'application/msword' });
     FileSaver.saveAs(blob, `${group.skillCode}_Worksheet.doc`);
+  };
+
+  const downloadAllGroupsReport = () => {
+    let combinedHtml = `
+        <html xmlns:o='urn:schemas-microsoft-com:office:office' xmlns:w='urn:schemas-microsoft-com:office:word' xmlns='http://www.w3.org/TR/REC-html40'>
+        <head>
+            <meta charset='utf-8'>
+            <title>All Remedial Groups Report</title>
+            <style>
+                body { font-family: 'Calibri', sans-serif; font-size: 11pt; }
+                h1 { font-size: 20pt; color: #4F46E5; margin-bottom: 10px; }
+                h2 { font-size: 16pt; color: #1F4D78; margin-top: 20px; border-bottom: 2px solid #ddd; }
+                h3 { font-size: 14pt; color: #333; margin-top: 15px; }
+                p { margin-bottom: 10px; }
+                table { border-collapse: collapse; width: 100%; margin-bottom: 15px; }
+                td, th { border: 1px solid #ccc; padding: 5px; }
+                th { background-color: #f3f4f6; }
+                .page-break { page-break-before: always; }
+            </style>
+        </head>
+        <body>
+            <h1>Comprehensive Remedial Groups Report</h1>
+            <p><strong>Teacher:</strong> ${teacherProfile.name} | <strong>Date:</strong> ${new Date().toLocaleDateString()}</p>
+    `;
+
+    sortedGroups.forEach((group, index) => {
+        if (index > 0) combinedHtml += '<div class="page-break"></div>';
+
+        // Group Header
+        combinedHtml += `
+            <h2>Group ${index + 1}: ${group.skillCode}</h2>
+            <p><strong>Skill Description:</strong> ${group.skillDescription}</p>
+            <p><strong>Total Students:</strong> ${group.students.length}</p>
+        `;
+
+        // Student List
+        combinedHtml += `
+            <h3>Student Roster</h3>
+            <table>
+                <thead><tr><th>Student Name</th><th>Student ID</th><th>Weakest Skill</th></tr></thead>
+                <tbody>
+                    ${group.students.map(s => `<tr><td>${s.studentName}</td><td>${s.studentId}</td><td>${s.weakestSkills[0]?.skillCode}</td></tr>`).join('')}
+                </tbody>
+            </table>
+        `;
+
+        // Generated Content (if available)
+        const content = generatedContent[group.id];
+        if (content) {
+            combinedHtml += `<h3>Generated Lesson Plan</h3>`;
+            if (content.smartGoal) {
+                combinedHtml += `<p><strong>SMART Goal:</strong> ${content.smartGoal.fullStatement}</p>`;
+            }
+            if (content.remedialPlan) {
+                combinedHtml += `<p><strong>Objective:</strong> ${content.remedialPlan.objective}</p>`;
+                combinedHtml += `<p><strong>Warm Up:</strong> ${content.remedialPlan.lessonFlow.warmUp}</p>`;
+                combinedHtml += `<p><strong>Mini Lesson:</strong> ${content.remedialPlan.lessonFlow.miniLesson}</p>`;
+            }
+            
+            if (content.worksheetContent) {
+                combinedHtml += `<div class="page-break"></div><h3>Worksheet for ${group.skillCode}</h3>`;
+                combinedHtml += convertMarkdownToWordHtml(content.worksheetContent);
+            }
+        }
+    });
+
+    combinedHtml += `</body></html>`;
+
+    const blob = new Blob(['\ufeff', combinedHtml], { type: 'application/msword' });
+    FileSaver.saveAs(blob, `All_Remedial_Groups_Report.doc`);
   };
 
   return (
     <div className="space-y-6">
-      <div className="flex justify-between items-center">
+      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
         <div>
           <h2 className="text-2xl font-bold text-gray-800">Remedial Groups</h2>
           <p className="text-gray-500">
              Targeted interventions for Grade {teacherProfile.gradeLevel} {teacherProfile.subject}.
           </p>
         </div>
+        <button 
+            onClick={downloadAllGroupsReport}
+            className="flex items-center gap-2 bg-indigo-50 text-indigo-700 px-4 py-2 rounded-lg font-medium hover:bg-indigo-100 transition-colors border border-indigo-200"
+        >
+            <FolderDown size={18} /> Download Full Report
+        </button>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
         {/* Groups List - Narrower Column */}
-        <div className="lg:col-span-3 space-y-4 max-h-[calc(100vh-140px)] overflow-y-auto pr-2">
+        <div className="lg:col-span-3 space-y-4 max-h-[calc(100vh-140px)] overflow-y-auto pr-2 pb-10">
           {sortedGroups.map(group => (
             <div 
               key={group.id}
@@ -329,11 +335,11 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
         </div>
 
         {/* Detail & AI View - Wider Column */}
-        <div className="lg:col-span-9">
+        <div id="group-details-panel" className="lg:col-span-9 scroll-mt-24">
           {selectedGroup ? (
             <div className="space-y-6">
               {/* Header Card */}
-              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex justify-between items-center">
+              <div className="bg-white p-6 rounded-xl shadow-sm border border-gray-200 flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div>
                   <h3 className="text-2xl font-bold text-gray-800 flex items-center gap-2">
                     {selectedGroup.skillCode} Intervention
@@ -348,7 +354,7 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
                       className="flex items-center gap-2 bg-gradient-to-r from-indigo-600 to-purple-600 text-white px-6 py-3 rounded-lg hover:opacity-90 disabled:opacity-50 transition-all shadow-md font-medium"
                     >
                       {loading ? <Loader2 className="animate-spin" size={20} /> : <Sparkles size={20} />}
-                      Generate Plan & Worksheet
+                      Generate Content
                     </button>
                   ) : (
                     <div className="flex gap-2">
@@ -362,6 +368,20 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
                     </div>
                   )}
                 </div>
+              </div>
+
+              {/* Student List in Group (Visible when selected) */}
+              <div className="bg-white p-4 rounded-xl border border-gray-100 shadow-sm">
+                  <h4 className="font-semibold text-gray-700 mb-2 flex items-center gap-2">
+                      <Users size={16} /> Students in this Group
+                  </h4>
+                  <div className="flex flex-wrap gap-2">
+                      {selectedGroup.students.map(s => (
+                          <span key={s.studentId} className="px-3 py-1 bg-gray-100 text-gray-700 rounded-full text-sm">
+                              {s.studentName} <span className="text-gray-400 text-xs ml-1">({Math.round(s.overallScore)}%)</span>
+                          </span>
+                      ))}
+                  </div>
               </div>
 
               {/* Content Area */}
