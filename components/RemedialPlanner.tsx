@@ -221,8 +221,9 @@ const RemedialPlanner: React.FC<PlannerProps> = ({ data, teacherProfile }) => {
     md = md.replace(/^\s*[\-\*]\s+(.*)$/gm, '<p style="margin-left: 20px; text-indent: -10px; margin-bottom: 5pt;">• $1</p>');
 
     // 6. Page Break before Answer Key
-    // Looks for the "Answer Key" header (H2 or H3) and adds a page break before it
-    md = md.replace(/(<h[23]>\s*Answer Key\s*<\/h[23]>)/i, '<br clear=all style="page-break-before:always" />$1');
+    // Looks for the "Answer Key" header (H2 or H3) and adds a page break before it. 
+    // Uses mso-special-character logic which Word prefers.
+    md = md.replace(/(<h[23]>\s*Answer Key\s*<\/h[23]>)/i, '<br clear=all style="mso-special-character:line-break;page-break-before:always" />$1');
 
     // 7. Line breaks for paragraphs
     // Clean up newlines around block elements to avoid huge gaps
