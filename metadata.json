@@ -1,0 +1,5 @@
+{
+  "name": "RemedialAI Planner",
+  "description": "An intelligent remedial class planner that analyzes student assessment data via Excel, identifies skill gaps, and uses Gemini AI to generate personalized lesson plans, worksheets, and parent reports.",
+  "requestFramePermissions": []
+}
